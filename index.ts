@@ -1041,4 +1041,32 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 		},
 	});
+
+	pi.registerTool({
+		name: "wf_write_artifact",
+		label: "Write Artifact",
+		description: "Safely writes a workflow artifact to .workflow/artifacts/. Cannot touch source files.",
+		parameters: {
+			type: "object",
+			properties: {
+				filename: { type: "string", description: "Name of the artifact file (e.g. 'research.md')" },
+				content: { type: "string", description: "Markdown content" }
+			},
+			required: ["filename", "content"]
+		},
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const filename = path.basename(params.filename as string); // prevent path traversal
+			const dir = path.join(ctx.cwd, ".workflow/artifacts");
+			const filepath = path.join(dir, filename);
+			
+			if (!fs.existsSync(dir)) {
+				fs.mkdirSync(dir, { recursive: true });
+			}
+			fs.writeFileSync(filepath, params.content as string, "utf8");
+			
+			return {
+				content: [{ type: "text", text: `Artifact successfully written to ${path.relative(ctx.cwd, filepath)}` }]
+			};
+		}
+	});
 }
