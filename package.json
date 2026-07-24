@@ -1,0 +1,15 @@
+{
+  "name": "pi-subagent",
+  "version": "0.1.0",
+  "description": "Delegate tasks to specialized subagents with isolated context windows, for pi.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"],
+    "prompts": ["./prompts"]
+  }
+}
