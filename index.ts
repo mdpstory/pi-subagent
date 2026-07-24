@@ -1115,10 +1115,14 @@ export default function (pi: ExtensionAPI) {
 				try {
 					rawWorkflowId = fs.readFileSync(path.join(process.cwd(), ".workflow", ".active-id"), "utf8").trim();
 				} catch {
-					rawWorkflowId = "default";
+					// No PI_WORKFLOW_ID and no .active-id — director hasn't initialized yet.
+					return {
+						content: [{ type: "text", text: "Blocked: no PI_WORKFLOW_ID env var and .workflow/.active-id not found. Run wf_init first." }],
+						isError: true,
+					};
 				}
 			}
-			const workflowId = rawWorkflowId.trim().replace(/[^a-zA-Z0-9._-]/g, "-") || "default";
+			const workflowId = rawWorkflowId.replace(/[^a-zA-Z0-9._-]/g, "-");
 			// Use process.cwd(), not ctx.cwd: pi-workflow's repoRoot() is process.cwd()
 			// too, so this must match exactly even if a task ran with a `cwd` override
 			// (ctx.cwd there reflects that override, not the OS working directory
