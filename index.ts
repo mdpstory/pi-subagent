@@ -1110,7 +1110,14 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const rawWorkflowId = process.env.PI_WORKFLOW_ID ?? "default";
+			let rawWorkflowId = process.env.PI_WORKFLOW_ID;
+			if (!rawWorkflowId) {
+				try {
+					rawWorkflowId = fs.readFileSync(path.join(process.cwd(), ".workflow", ".active-id"), "utf8").trim();
+				} catch {
+					rawWorkflowId = "default";
+				}
+			}
 			const workflowId = rawWorkflowId.trim().replace(/[^a-zA-Z0-9._-]/g, "-") || "default";
 			// Use process.cwd(), not ctx.cwd: pi-workflow's repoRoot() is process.cwd()
 			// too, so this must match exactly even if a task ran with a `cwd` override
