@@ -320,8 +320,12 @@ async function runSingleAgent(
 	};
 
 	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+		const toolsLine = agent.tools?.length
+			? `You only have access to these tools: ${agent.tools.join(", ")}. Do NOT attempt to call any other tool — the call will fail.`
+			: "";
+		const fullPrompt = [agent.systemPrompt.trim(), toolsLine].filter(Boolean).join("\n\n");
+		if (fullPrompt) {
+			const tmp = await writePromptToTempFile(agent.name, fullPrompt);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
 			args.push("--append-system-prompt", tmpPromptPath);
@@ -457,16 +461,33 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
+function buildToolDescription(cwd: string): string {
+	const discovery = discoverAgents(cwd, "user");
+	const agentLines = discovery.agents.length
+		? discovery.agents
+			.map((a) => {
+				const toolsNote = a.tools?.length ? ` [tools: ${a.tools.join(", ")}]` : " [tools: all]";
+				return `  - ${a.name}: ${a.description}${toolsNote}`;
+			})
+			.join("\n")
+		: "  (none found)";
+	return [
+		"Delegate tasks to specialized subagents with isolated context.",
+		"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+		`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
+		`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+		`\nAvailable agents:\n${agentLines}`,
+		"IMPORTANT: always pick the most specific agent for the task — use worker only when no other agent fits.",
+	].join(" ");
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
-		].join(" "),
+		get description() {
+			return buildToolDescription(process.cwd());
+		},
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
