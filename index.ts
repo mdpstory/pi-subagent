@@ -249,9 +249,6 @@ function renderToolCallDetail(
 /** Renders the in-progress tool call / text the model is currently streaming, word-by-word. */
 function renderLiveBlock(r: SingleResult, theme: any, mdTheme: any): Array<Text | Markdown> {
 	const out: Array<Text | Markdown> = [];
-	if (r.liveText) {
-		out.push(new Text(theme.fg("dim", "… ") + theme.fg("toolOutput", r.liveText) + theme.fg("dim", " ▌"), 0, 0));
-	}
 	if (r.liveToolCall) {
 		const { name, rawArgs } = r.liveToolCall;
 		out.push(new Text(theme.fg("muted", "→ ") + theme.fg("accent", name) + theme.fg("dim", " (writing...)"), 0, 0));
@@ -1054,9 +1051,6 @@ export default function (pi: ExtensionAPI) {
 							"";
 						const lastLine = preview.split("\n").slice(-1)[0].slice(-70);
 						text += `\n${theme.fg("muted", "→ ") + theme.fg("accent", r.liveToolCall.name)}${theme.fg("dim", ` writing... ${lastLine}▌`)}`;
-					} else if (r.liveText) {
-						const lastLine = r.liveText.split("\n").slice(-1)[0].slice(-80);
-						text += `\n${theme.fg("dim", `… ${lastLine}▌`)}`;
 					}
 				}
 				const usageStr = formatUsageStats(r.usage, r.model);
