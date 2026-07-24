@@ -1,0 +1,31 @@
+{
+  "stages": {
+    "planning": {
+      "status": "todo"
+    },
+    "research": {
+      "status": "todo"
+    },
+    "task-breakdown": {
+      "status": "todo"
+    },
+    "architecture": {
+      "status": "todo"
+    },
+    "implementation": {
+      "status": "todo"
+    },
+    "review": {
+      "status": "todo"
+    },
+    "testing": {
+      "status": "todo"
+    },
+    "documentation": {
+      "status": "todo"
+    }
+  },
+  "current": null,
+  "rulings": {},
+  "toolCallsThisStage": 0
+}
