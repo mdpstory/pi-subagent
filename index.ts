@@ -1047,10 +1047,41 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Artifact md files that pi-workflow scaffolds via wf_init. Anything else
+	// is rejected so this tool can't be used to smuggle arbitrary files into
+	// .workflow/<id>/artifacts/. Keep in sync with pi-workflow's ARTIFACT_MDS.
+	const ARTIFACT_MDS = new Set([
+		"plan.md",
+		"tasks.md",
+		"research.md",
+		"architecture.md",
+		"decisions.md",
+		"clarifications.md",
+		"progress.md",
+		"review.md",
+		"test-report.md",
+		"changelog.md",
+		"context.md",
+	]);
+
+	// Which artifact each role may write. Keep in sync with pi-workflow's ROLE_ALLOW.
+	// Roles not listed (or no PI_WORKFLOW_ROLE at all) fall back to "director" — full access —
+	// matching pi-workflow's own role() default.
+	const ROLE_ARTIFACT_ALLOW: Record<string, Set<string>> = {
+		director: new Set(ARTIFACT_MDS),
+		planner: new Set(["plan.md", "tasks.md", "context.md", "clarifications.md"]),
+		scout: new Set(["research.md", "context.md", "clarifications.md"]),
+		architect: new Set(["architecture.md", "decisions.md", "context.md", "clarifications.md"]),
+		engineer: new Set(["context.md", "clarifications.md"]),
+		reviewer: new Set(["review.md", "context.md", "clarifications.md"]),
+		qa: new Set(["test-report.md", "context.md", "clarifications.md"]),
+		documenter: new Set(["changelog.md", "context.md", "clarifications.md"]),
+	};
+
 	pi.registerTool({
 		name: "wf_write_artifact",
 		label: "Write Artifact",
-		description: "Safely writes a workflow artifact to .workflow/artifacts/. Cannot touch source files.",
+		description: "Safely writes a workflow artifact to .workflow/<id>/artifacts/. Cannot touch source files.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1061,14 +1092,40 @@ export default function (pi: ExtensionAPI) {
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const filename = path.basename(params.filename as string); // prevent path traversal
-			const dir = path.join(ctx.cwd, ".workflow/artifacts");
-			const filepath = path.join(dir, filename);
-			
-			if (!fs.existsSync(dir)) {
-				fs.mkdirSync(dir, { recursive: true });
+
+			if (!ARTIFACT_MDS.has(filename)) {
+				const available = Array.from(ARTIFACT_MDS).join(", ");
+				return {
+					content: [{ type: "text", text: `Rejected: "${filename}" is not a recognized workflow artifact. Allowed: ${available}` }],
+					isError: true,
+				};
 			}
-			fs.writeFileSync(filepath, params.content as string, "utf8");
-			
+
+			const role = (process.env.PI_WORKFLOW_ROLE ?? "director").toLowerCase();
+			const allowedForRole = ROLE_ARTIFACT_ALLOW[role];
+			if (!allowedForRole || !allowedForRole.has(filename)) {
+				return {
+					content: [{ type: "text", text: `Denied: role "${role}" may not write ${filename}.` }],
+					isError: true,
+				};
+			}
+
+			const rawWorkflowId = process.env.PI_WORKFLOW_ID ?? "default";
+			const workflowId = rawWorkflowId.trim().replace(/[^a-zA-Z0-9._-]/g, "-") || "default";
+			// Use process.cwd(), not ctx.cwd: pi-workflow's repoRoot() is process.cwd()
+			// too, so this must match exactly even if a task ran with a `cwd` override
+			// (ctx.cwd there reflects that override, not the OS working directory
+			// pi-workflow's own gating hook resolves paths against).
+			const dir = path.join(process.cwd(), ".workflow", workflowId, "artifacts");
+			const filepath = path.join(dir, filename);
+
+			await withFileMutationQueue(filepath, async () => {
+				if (!fs.existsSync(dir)) {
+					fs.mkdirSync(dir, { recursive: true });
+				}
+				await fs.promises.writeFile(filepath, params.content as string, "utf8");
+			});
+
 			return {
 				content: [{ type: "text", text: `Artifact successfully written to ${path.relative(ctx.cwd, filepath)}` }]
 			};
