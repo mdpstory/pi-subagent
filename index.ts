@@ -270,6 +270,7 @@ async function runSingleAgent(
 	agentName: string,
 	task: string,
 	cwd: string | undefined,
+	overrideModel: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
@@ -291,8 +292,9 @@ async function runSingleAgent(
 		};
 	}
 
+	const selectedModel = overrideModel || agent.model;
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (selectedModel) args.push("--model", selectedModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -306,7 +308,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: selectedModel,
 		step,
 	};
 
@@ -436,12 +438,14 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Model override for this task" })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Model override for this step" })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -452,6 +456,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
+	model: Type.Optional(Type.String({ description: "Model override (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
@@ -577,6 +582,7 @@ export default function (pi: ExtensionAPI) {
 						step.agent,
 						taskWithContext,
 						step.cwd,
+						step.model,
 						i + 1,
 						signal,
 						chainUpdate,
@@ -649,6 +655,7 @@ export default function (pi: ExtensionAPI) {
 						t.agent,
 						t.task,
 						t.cwd,
+						t.model,
 						undefined,
 						signal,
 						// Per-task update callback
@@ -691,6 +698,7 @@ export default function (pi: ExtensionAPI) {
 					params.agent,
 					params.task,
 					params.cwd,
+					params.model,
 					undefined,
 					signal,
 					onUpdate,
