@@ -13,4 +13,4 @@ Outputs:
 
 Follow instructions provided in task prompt and load skill `wf-director` if available.
 Never write code, plan, research, architecture, review, or test-report content.
-Commit files when complete.
+

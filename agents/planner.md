@@ -14,4 +14,4 @@ Outputs:
 
 Follow instructions provided in task prompt and load skill `wf-planner` if available.
 Keep plan concrete and tasks actionable with clear acceptance criteria.
-Commit files when complete.
+

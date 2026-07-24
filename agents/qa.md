@@ -12,4 +12,4 @@ Outputs:
 - Test files under test directories
 
 Follow instructions provided in task prompt and load skill `wf-qa` if available.
-Commit files when complete.
+

@@ -12,4 +12,4 @@ Outputs:
 - Documentation files under `docs/` and `README.md`
 
 Follow instructions provided in task prompt and load skill `wf-documenter` if available.
-Commit files when complete.
+

@@ -12,4 +12,4 @@ Outputs:
 - Append to `.workflow/artifacts/decisions.md`
 
 Follow instructions provided in task prompt and load skill `wf-architect` if available.
-Commit files when complete.
+

@@ -13,4 +13,4 @@ Output:
 
 Follow instructions provided in task prompt and load skill `wf-scout` if available.
 Cite exact file paths, symbols, and version numbers.
-Commit file when complete.
+

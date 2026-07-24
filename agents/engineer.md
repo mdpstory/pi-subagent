@@ -11,4 +11,4 @@ Outputs:
 - Source code implementation files
 
 Follow instructions provided in task prompt and load skill `wf-engineer` if available.
-Commit changes when complete.
+

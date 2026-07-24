@@ -13,4 +13,4 @@ Output:
 
 Follow instructions provided in task prompt and load skill `wf-reviewer` if available.
 Categorize findings by severity, cite task IDs and stable defect keys, and provide explicit verdict.
-Commit file when complete.
+
