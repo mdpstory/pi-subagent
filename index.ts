@@ -146,6 +146,141 @@ interface UsageStats {
 	turns: number;
 }
 
+/**
+ * Best-effort extraction of a string field's value from a possibly-incomplete
+ * JSON object being streamed token-by-token (e.g. `{"path":"a.txt","content":"line1\nli`).
+ * Returns whatever has been unescaped so far; stops safely at a dangling escape
+ * instead of throwing on invalid JSON.
+ */
+function extractPartialStringField(raw: string, field: string): string | undefined {
+	const marker = `"${field}":"`;
+	const start = raw.indexOf(marker);
+	if (start === -1) return undefined;
+	let i = start + marker.length;
+	let out = "";
+	while (i < raw.length) {
+		const ch = raw[i];
+		if (ch === "\\") {
+			const next = raw[i + 1];
+			if (next === undefined) break; // dangling escape at buffer end, stop safely
+			if (next === "u") {
+				const hex = raw.slice(i + 2, i + 6);
+				if (hex.length < 4) break; // incomplete unicode escape
+				out += String.fromCharCode(Number.parseInt(hex, 16));
+				i += 6;
+				continue;
+			}
+			const map: Record<string, string> = { n: "\n", t: "\t", r: "\r", '"': '"', "\\": "\\", "/": "/" };
+			out += map[next] ?? next;
+			i += 2;
+			continue;
+		}
+		if (ch === '"') break; // reached the closing quote — field complete
+		out += ch;
+		i++;
+	}
+	return out;
+}
+
+function langForPath(filePath: string): string {
+	const ext = path.extname(filePath).slice(1).toLowerCase();
+	const map: Record<string, string> = {
+		ts: "typescript",
+		tsx: "tsx",
+		js: "javascript",
+		jsx: "jsx",
+		py: "python",
+		rb: "ruby",
+		go: "go",
+		rs: "rust",
+		java: "java",
+		json: "json",
+		md: "markdown",
+		sh: "bash",
+		yml: "yaml",
+		yaml: "yaml",
+	};
+	return map[ext] ?? ext ?? "";
+}
+
+/** Simple line-based diff (LCS-free, longest-common-prefix/suffix trim) good enough for a live preview. */
+function simpleDiffLines(oldText: string, newText: string): string[] {
+	const oldLines = oldText.split("\n");
+	const newLines = newText.split("\n");
+	let start = 0;
+	while (start < oldLines.length && start < newLines.length && oldLines[start] === newLines[start]) start++;
+	let endOld = oldLines.length;
+	let endNew = newLines.length;
+	while (endOld > start && endNew > start && oldLines[endOld - 1] === newLines[endNew - 1]) {
+		endOld--;
+		endNew--;
+	}
+	const out: string[] = [];
+	for (let i = start; i < endOld; i++) out.push(`- ${oldLines[i]}`);
+	for (let i = start; i < endNew; i++) out.push(`+ ${newLines[i]}`);
+	return out;
+}
+
+/** Renders the full code content / diff for a completed write or edit tool call (not just a filename summary). */
+function renderToolCallDetail(
+	name: string,
+	args: Record<string, any>,
+	theme: any,
+	mdTheme: any,
+): Array<Text | Markdown> {
+	const out: Array<Text | Markdown> = [];
+	if (name === "write") {
+		const filePath = (args.file_path || args.path || "") as string;
+		const content = (args.content ?? "") as string;
+		if (content) out.push(new Markdown(`\`\`\`${langForPath(filePath)}\n${content}\n\`\`\``, 0, 0, mdTheme));
+	} else if (name === "edit") {
+		const oldText = (args.old_text || args.oldText || "") as string;
+		const newText = (args.new_text || args.newText || "") as string;
+		if (oldText || newText) {
+			const lines = simpleDiffLines(oldText, newText).map((l) =>
+				l.startsWith("+") ? theme.fg("success", l) : l.startsWith("-") ? theme.fg("error", l) : l,
+			);
+			if (lines.length) out.push(new Text(lines.join("\n"), 0, 0));
+		}
+	}
+	return out;
+}
+
+/** Renders the in-progress tool call / text the model is currently streaming, word-by-word. */
+function renderLiveBlock(r: SingleResult, theme: any, mdTheme: any): Array<Text | Markdown> {
+	const out: Array<Text | Markdown> = [];
+	if (r.liveText) {
+		out.push(new Text(theme.fg("dim", "… ") + theme.fg("toolOutput", r.liveText) + theme.fg("dim", " ▌"), 0, 0));
+	}
+	if (r.liveToolCall) {
+		const { name, rawArgs } = r.liveToolCall;
+		out.push(new Text(theme.fg("muted", "→ ") + theme.fg("accent", name) + theme.fg("dim", " (writing...)"), 0, 0));
+		if (name === "write") {
+			const content = extractPartialStringField(rawArgs, "content");
+			if (content) {
+				const filePath =
+					extractPartialStringField(rawArgs, "file_path") ?? extractPartialStringField(rawArgs, "path") ?? "";
+				out.push(new Markdown(`\`\`\`${langForPath(filePath)}\n${content}▌\n\`\`\``, 0, 0, mdTheme));
+			}
+		} else if (name === "edit") {
+			const newText = extractPartialStringField(rawArgs, "new_text") ?? extractPartialStringField(rawArgs, "newText");
+			if (newText) {
+				const lines = newText
+					.split("\n")
+					.map((l) => theme.fg("success", `+ ${l}`))
+					.join("\n");
+				out.push(new Text(`${lines}${theme.fg("dim", "▌")}`, 0, 0));
+			}
+		}
+	}
+	return out;
+}
+
+interface LiveToolCall {
+	name: string;
+	rawArgs: string;
+}
+
 interface SingleResult {
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
@@ -158,6 +293,10 @@ interface SingleResult {
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
+	/** In-progress text the model is currently emitting (word-by-word), cleared once folded into messages. */
+	liveText?: string;
+	/** In-progress tool call whose arguments are still streaming in (e.g. a `write` mid-generation). */
+	liveToolCall?: LiveToolCall;
 }
 
 interface SubagentDetails {
@@ -321,6 +460,17 @@ async function runSingleAgent(
 		}
 	};
 
+	// Streaming deltas arrive many times per second; throttle UI pushes so we
+	// don't hammer the terminal renderer while still feeling "live".
+	const LIVE_THROTTLE_MS = 80;
+	let lastLiveEmit = 0;
+	const emitLiveUpdate = () => {
+		const now = Date.now();
+		if (now - lastLiveEmit < LIVE_THROTTLE_MS) return;
+		lastLiveEmit = now;
+		emitUpdate();
+	};
+
 	try {
 		const toolsLine = agent.tools?.length
 			? `You only have access to these tools: ${agent.tools.join(", ")}. Do NOT attempt to call any other tool — the call will fail.`
@@ -354,9 +504,49 @@ async function runSingleAgent(
 					return;
 				}
 
+				if (event.type === "message_update" && event.assistantMessageEvent) {
+					const ev = event.assistantMessageEvent;
+					switch (ev.type) {
+						case "text_start":
+						case "thinking_start":
+							currentResult.liveText = "";
+							currentResult.liveToolCall = undefined;
+							break;
+						case "text_delta":
+						case "thinking_delta":
+							currentResult.liveText = (currentResult.liveText ?? "") + (ev.delta ?? "");
+							emitLiveUpdate();
+							break;
+						case "text_end":
+						case "thinking_end":
+							currentResult.liveText = undefined;
+							break;
+						case "toolcall_start": {
+							const partialItem = ev.partial?.content?.[ev.contentIndex];
+							currentResult.liveToolCall = { name: partialItem?.name ?? "", rawArgs: "" };
+							currentResult.liveText = undefined;
+							break;
+						}
+						case "toolcall_delta": {
+							const partialItem = ev.partial?.content?.[ev.contentIndex];
+							if (currentResult.liveToolCall) {
+								currentResult.liveToolCall.rawArgs = partialItem?.partialJson ?? currentResult.liveToolCall.rawArgs;
+								emitLiveUpdate();
+							}
+							break;
+						}
+						case "toolcall_end":
+							currentResult.liveToolCall = undefined;
+							break;
+					}
+					return;
+				}
+
 				if (event.type === "message_end" && event.message) {
 					const msg = event.message as Message;
 					currentResult.messages.push(msg);
+					currentResult.liveText = undefined;
+					currentResult.liveToolCall = undefined;
 
 					if (msg.role === "assistant") {
 						currentResult.usage.turns++;
@@ -814,11 +1004,11 @@ export default function (pi: ExtensionAPI) {
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-					if (displayItems.length === 0 && !finalOutput) {
+					if (displayItems.length === 0 && !finalOutput && !r.liveText && !r.liveToolCall) {
 						container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
 					} else {
 						for (const item of displayItems) {
-							if (item.type === "toolCall")
+							if (item.type === "toolCall") {
 								container.addChild(
 									new Text(
 										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
@@ -826,7 +1016,11 @@ export default function (pi: ExtensionAPI) {
 										0,
 									),
 								);
+								for (const detail of renderToolCallDetail(item.name, item.args, theme, mdTheme))
+									container.addChild(detail);
+							}
 						}
+						for (const live of renderLiveBlock(r, theme, mdTheme)) container.addChild(live);
 						if (finalOutput) {
 							container.addChild(new Spacer(1));
 							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
@@ -843,10 +1037,25 @@ export default function (pi: ExtensionAPI) {
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+				else if (displayItems.length === 0 && !r.liveText && !r.liveToolCall)
+					text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
-					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
-					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					if (displayItems.length) {
+						text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
+						if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+					}
+					if (r.liveToolCall) {
+						const preview =
+							extractPartialStringField(r.liveToolCall.rawArgs, "content") ??
+							extractPartialStringField(r.liveToolCall.rawArgs, "new_text") ??
+							extractPartialStringField(r.liveToolCall.rawArgs, "newText") ??
+							"";
+						const lastLine = preview.split("\n").slice(-1)[0].slice(-70);
+						text += `\n${theme.fg("muted", "→ ") + theme.fg("accent", r.liveToolCall.name)}${theme.fg("dim", ` writing... ${lastLine}▌`)}`;
+					} else if (r.liveText) {
+						const lastLine = r.liveText.split("\n").slice(-1)[0].slice(-80);
+						text += `\n${theme.fg("dim", `… ${lastLine}▌`)}`;
+					}
 				}
 				const usageStr = formatUsageStats(r.usage, r.model);
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
