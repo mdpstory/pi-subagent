@@ -523,7 +523,9 @@ async function runSingleAgent(
 							break;
 						case "toolcall_start": {
 							const partialItem = ev.partial?.content?.[ev.contentIndex];
-							currentResult.liveToolCall = { name: partialItem?.name ?? "", rawArgs: "" };
+							if (!currentResult.liveToolCall) {
+								currentResult.liveToolCall = { name: partialItem?.name ?? "", rawArgs: "" };
+							}
 							currentResult.liveText = undefined;
 							break;
 						}
