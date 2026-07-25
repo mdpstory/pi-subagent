@@ -527,9 +527,8 @@ async function runSingleAgent(
 							break;
 						}
 						case "toolcall_delta": {
-							const partialItem = ev.partial?.content?.[ev.contentIndex];
 							if (currentResult.liveToolCall) {
-								currentResult.liveToolCall.rawArgs = partialItem?.partialJson ?? currentResult.liveToolCall.rawArgs;
+								currentResult.liveToolCall.rawArgs += ev.delta ?? "";
 								emitLiveUpdate();
 							}
 							break;
