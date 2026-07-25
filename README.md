@@ -1,4 +1,14 @@
-# pi-subagent
+# pi-subagent (archived — merged into pi-workflow)
+
+> **This package is retired.** Its `subagent` tool, agent personas, and
+> prompts were merged into
+> [`pi-workflow`](https://github.com/mdpstory/pi-workflow) — see
+> `~/Notes/.pi/extensions/pi-workflow/subagent/` and its README's `subagent`
+> tool section. Nothing in this repo is wired into a running package anymore
+> (removed from `~/.pi/agent/settings.json`'s `packages` list). Kept around
+> for git history only.
+
+---
 
 Delegate tasks to specialized subagents with isolated context windows, for [pi](https://pi.dev).
 
