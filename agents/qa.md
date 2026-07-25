@@ -1,5 +1,6 @@
 ---
 name: qa
+workflowRole: qa
 description: Quality assurance and test verification specialist
 model: claude-sonnet-4-5
 tools: read, bash, write, edit, codegraph_search, codegraph_explore

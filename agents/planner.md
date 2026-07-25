@@ -1,5 +1,6 @@
 ---
 name: planner
+workflowRole: planner
 description: Workflow planning specialist for requirements, milestones, and task breakdown
 model: claude-sonnet-4-5
 tools: read, bash, wf_write_artifact, codegraph_search, codegraph_explore

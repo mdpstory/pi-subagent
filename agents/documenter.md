@@ -1,5 +1,6 @@
 ---
 name: documenter
+workflowRole: documenter
 description: Documentation specialist for changelogs, READMEs, and user guides
 model: claude-haiku-4-5
 tools: read, bash, write, edit, codegraph_search

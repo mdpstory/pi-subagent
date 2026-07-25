@@ -13,6 +13,13 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	/**
+	 * Opt-in pi-workflow role this agent represents (e.g. "engineer", "scout").
+	 * Injected as PI_WORKFLOW_ROLE into the spawned child's env unless the
+	 * caller passes an explicit env override. Deliberately not derived from
+	 * `name` — an agent must declare this itself.
+	 */
+	workflowRole?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -65,6 +72,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model,
+			workflowRole: frontmatter.workflowRole?.trim() || undefined,
 			systemPrompt: body,
 			source,
 			filePath,

@@ -1,5 +1,6 @@
 ---
 name: director
+workflowRole: director
 description: Workflow orchestrator that manages stages, reviews transitions, and resolves conflicts
 model: claude-sonnet-4-5
 tools: read, write, bash, edit, wf_init, wf_stage_start, wf_stage_complete, wf_clr_open, wf_clr_resolve, wf_retry_bump, wf_retry_rule, wf_status

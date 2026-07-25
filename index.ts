@@ -400,6 +400,56 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
+
+function readActiveWorkflowId(cwd: string): string | undefined {
+	try {
+		return fs.readFileSync(path.join(cwd, ".workflow", ".active-id"), "utf8").trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Builds the env for a spawned child, or returns an error if the recursion
+ * depth ceiling would be exceeded. Precedence (low to high): inherited
+ * process.env -> depth/chain bookkeeping -> agent-declared workflowRole ->
+ * auto-resolved PI_WORKFLOW_ID -> caller-supplied extraEnv (always wins).
+ */
+function buildChildEnv(
+	defaultCwd: string,
+	agentName: string,
+	agent: AgentConfig,
+	extraEnv: Record<string, string> | undefined,
+): { env: NodeJS.ProcessEnv; error?: undefined } | { env?: undefined; error: string } {
+	const parentDepth = Number.parseInt(process.env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0;
+	const maxDepth = Number.parseInt(process.env.PI_SUBAGENT_MAX_DEPTH ?? "", 10) || DEFAULT_MAX_SUBAGENT_DEPTH;
+	const childDepth = parentDepth + 1;
+	const parentChain = process.env.PI_SUBAGENT_CHAIN;
+	const chain = parentChain ? `${parentChain} > ${agentName}` : agentName;
+
+	if (childDepth > maxDepth) {
+		return { error: `Refused: subagent recursion depth exceeded (max ${maxDepth}). Chain: ${chain}` };
+	}
+
+	const env: NodeJS.ProcessEnv = {
+		...process.env,
+		PI_SUBAGENT_DEPTH: String(childDepth),
+		PI_SUBAGENT_PARENT_AGENT: process.env.PI_SUBAGENT_SELF_AGENT ?? "root",
+		PI_SUBAGENT_SELF_AGENT: agentName,
+		PI_SUBAGENT_CHAIN: chain,
+	};
+
+	if (agent.workflowRole) env.PI_WORKFLOW_ROLE = agent.workflowRole;
+
+	const workflowId = process.env.PI_WORKFLOW_ID ?? readActiveWorkflowId(defaultCwd);
+	if (workflowId) env.PI_WORKFLOW_ID = workflowId;
+
+	if (extraEnv) Object.assign(env, extraEnv);
+
+	return { env };
+}
+
 async function runSingleAgent(
 	defaultCwd: string,
 	agents: AgentConfig[],
@@ -407,6 +457,7 @@ async function runSingleAgent(
 	task: string,
 	cwd: string | undefined,
 	overrideModel: string | undefined,
+	extraEnv: Record<string, string> | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
@@ -427,6 +478,21 @@ async function runSingleAgent(
 			step,
 		};
 	}
+
+	const depthCheck = buildChildEnv(defaultCwd, agentName, agent, extraEnv);
+	if (depthCheck.error) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: depthCheck.error,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			step,
+		};
+	}
+	const childEnv = depthCheck.env;
 
 	const selectedModel = overrideModel || agent.model;
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
@@ -489,6 +555,7 @@ async function runSingleAgent(
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
+				env: childEnv,
 			});
 			let buffer = "";
 
@@ -622,11 +689,16 @@ async function runSingleAgent(
 	}
 }
 
+const AgentEnvSchema = Type.Record(Type.String(), Type.String(), {
+	description: "Extra environment variables for the spawned agent process",
+});
+
 const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 	model: Type.Optional(Type.String({ description: "Model override for this task" })),
+	env: Type.Optional(AgentEnvSchema),
 });
 
 const ChainItem = Type.Object({
@@ -634,6 +706,7 @@ const ChainItem = Type.Object({
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 	model: Type.Optional(Type.String({ description: "Model override for this step" })),
+	env: Type.Optional(AgentEnvSchema),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -652,6 +725,7 @@ const SubagentParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	env: Type.Optional(AgentEnvSchema),
 });
 
 function buildToolDescription(cwd: string): string {
@@ -771,6 +845,7 @@ export default function (pi: ExtensionAPI) {
 						taskWithContext,
 						step.cwd,
 						step.model,
+						step.env,
 						i + 1,
 						signal,
 						chainUpdate,
@@ -844,6 +919,7 @@ export default function (pi: ExtensionAPI) {
 						t.task,
 						t.cwd,
 						t.model,
+						t.env,
 						undefined,
 						signal,
 						// Per-task update callback
@@ -887,6 +963,7 @@ export default function (pi: ExtensionAPI) {
 					params.task,
 					params.cwd,
 					params.model,
+					params.env,
 					undefined,
 					signal,
 					onUpdate,

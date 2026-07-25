@@ -1,5 +1,6 @@
 ---
 name: reviewer
+workflowRole: reviewer
 description: Code review specialist for quality, security, and task compliance analysis
 model: claude-sonnet-4-5
 tools: read, bash, wf_write_artifact, codegraph_search, codegraph_explore, codegraph_files

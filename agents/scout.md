@@ -1,5 +1,6 @@
 ---
 name: scout
+workflowRole: scout
 description: Codebase survey and research specialist for risks, dependencies, and reusable components
 model: claude-haiku-4-5
 tools: read, bash, wf_write_artifact, codegraph_search, codegraph_explore, codegraph_files, codegraph_node, codegraph_callers

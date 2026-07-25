@@ -1,5 +1,6 @@
 ---
 name: architect
+workflowRole: architect
 description: System design and architecture specialist for interfaces, data flow, and technical decisions
 model: claude-sonnet-4-5
 tools: read, bash, write, edit, codegraph_search, codegraph_explore, codegraph_files, codegraph_node
