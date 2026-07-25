@@ -402,6 +402,31 @@ type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
 
+/**
+ * Env keys that encode *identity and safety limits*, never user data. These are set
+ * exclusively by buildChildEnv from things the extension controls (which agent was
+ * dispatched, how deep we already are) and are stripped from caller-supplied `env`.
+ *
+ * Why: `env` is tool input, i.e. model-controlled. If a caller could set
+ * PI_WORKFLOW_ROLE it could dispatch `{agent:"engineer", env:{PI_WORKFLOW_ROLE:"director"}}`
+ * and hand the child director permissions — identity would still be a thing the model
+ * asserts rather than a thing the harness enforces, which is exactly the hole that made
+ * the task-text convention useless. Same for PI_SUBAGENT_DEPTH: a caller resetting it to
+ * "0" would defeat the recursion ceiling outright.
+ *
+ * Consequence (intended): identity derives from *which agent was dispatched*, via the
+ * agent's declared `workflowRole` frontmatter. Callers do not pass roles at all.
+ */
+const RESERVED_ENV_KEYS = new Set([
+	"PI_WORKFLOW_ROLE",
+	"PI_WORKFLOW_ID",
+	"PI_SUBAGENT_DEPTH",
+	"PI_SUBAGENT_CHAIN",
+	"PI_SUBAGENT_SELF_AGENT",
+	"PI_SUBAGENT_PARENT_AGENT",
+	"PI_SUBAGENT_MAX_DEPTH",
+]);
+
 function readActiveWorkflowId(cwd: string): string | undefined {
 	try {
 		return fs.readFileSync(path.join(cwd, ".workflow", ".active-id"), "utf8").trim() || undefined;
@@ -412,12 +437,24 @@ function readActiveWorkflowId(cwd: string): string | undefined {
 
 /**
  * Builds the env for a spawned child, or returns an error if the recursion
- * depth ceiling would be exceeded. Precedence (low to high): inherited
- * process.env -> depth/chain bookkeeping -> agent-declared workflowRole ->
- * auto-resolved PI_WORKFLOW_ID -> caller-supplied extraEnv (always wins).
+ * depth ceiling would be exceeded.
+ *
+ * Precedence (low to high): inherited process.env -> caller-supplied extraEnv
+ * (minus RESERVED_ENV_KEYS) -> depth/chain bookkeeping -> agent-declared
+ * workflowRole -> auto-resolved PI_WORKFLOW_ID.
+ *
+ * Note the caller sits *below* the identity layer, not above it: reserved keys are
+ * dropped from extraEnv before it is merged, so no tool input can assign a role,
+ * retarget a workflow namespace, or reset the recursion counter. See RESERVED_ENV_KEYS.
+ *
+ * `childCwd` is the directory the child will actually run in (`cwd ?? defaultCwd` at
+ * the spawn site) — the .workflow/.active-id marker must be resolved against *that*,
+ * not against the parent's cwd, or a task with a `cwd` override into another repo
+ * inherits this repo's workflow id and writes artifacts into a namespace that does
+ * not exist there.
  */
 function buildChildEnv(
-	defaultCwd: string,
+	childCwd: string,
 	agentName: string,
 	agent: AgentConfig,
 	extraEnv: Record<string, string> | undefined,
@@ -434,18 +471,32 @@ function buildChildEnv(
 
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
+	};
+
+	// Caller-supplied env first, with identity/limit keys stripped — it may not
+	// override anything set below.
+	if (extraEnv) {
+		for (const [k, v] of Object.entries(extraEnv)) {
+			if (RESERVED_ENV_KEYS.has(k)) continue;
+			env[k] = v;
+		}
+	}
+
+	Object.assign(env, {
 		PI_SUBAGENT_DEPTH: String(childDepth),
 		PI_SUBAGENT_PARENT_AGENT: process.env.PI_SUBAGENT_SELF_AGENT ?? "root",
 		PI_SUBAGENT_SELF_AGENT: agentName,
 		PI_SUBAGENT_CHAIN: chain,
-	};
+	});
 
+	// Identity comes from the dispatched agent's declaration, never from tool input.
+	// An agent with no `workflowRole` frontmatter (e.g. `worker`) gets no role at all —
+	// the inherited value is cleared so it can't masquerade as its parent.
 	if (agent.workflowRole) env.PI_WORKFLOW_ROLE = agent.workflowRole;
+	else delete env.PI_WORKFLOW_ROLE;
 
-	const workflowId = process.env.PI_WORKFLOW_ID ?? readActiveWorkflowId(defaultCwd);
+	const workflowId = process.env.PI_WORKFLOW_ID ?? readActiveWorkflowId(childCwd);
 	if (workflowId) env.PI_WORKFLOW_ID = workflowId;
-
-	if (extraEnv) Object.assign(env, extraEnv);
 
 	return { env };
 }
@@ -479,7 +530,7 @@ async function runSingleAgent(
 		};
 	}
 
-	const depthCheck = buildChildEnv(defaultCwd, agentName, agent, extraEnv);
+	const depthCheck = buildChildEnv(cwd ?? defaultCwd, agentName, agent, extraEnv);
 	if (depthCheck.error) {
 		return {
 			agent: agentName,
@@ -690,7 +741,10 @@ async function runSingleAgent(
 }
 
 const AgentEnvSchema = Type.Record(Type.String(), Type.String(), {
-	description: "Extra environment variables for the spawned agent process",
+	description:
+		"Extra environment variables for the spawned agent process. Workflow identity and " +
+		"safety keys (PI_WORKFLOW_ROLE, PI_WORKFLOW_ID, PI_SUBAGENT_*) are reserved and " +
+		"ignored here — the agent's own definition determines its role.",
 });
 
 const TaskItem = Type.Object({
